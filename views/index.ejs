@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta http-equiv="Content-Type" const="text/html;charset=UTF-8" />
+	<title>Simple Chat App</title>
+	<link href="http://fonts.googleapis.com/css?family=Comfortaa" rel="stylesheet" type="text/css">
+	<link rel="stylesheet" type="text/css" href="style.css" >
+</head>
+<body>
+	<div id="root">
+		<select v-model="activeRoom" @change="getMessage()">
+			<option value="">New Chat</option>
+			<option v-for="r in rooms" :value="r.code">{{ getNotme(r.username_1, r.username_2) }}</option>
+		</select>
+		<input type="text" v-model="willStartUsername" v-show="!activeRoom">
+		<table style="width: 576px;">
+			<tr>
+				<th>Time</th>
+				<th>From</th>
+				<th>Message</th>
+				<th>Status</th>
+			</tr>
+			<tr v-for="m in currentMessages">
+				<td>{{ formatDate(m.created_at) }}</td>
+				<td>{{ m.from }}</td>
+				<td>{{ m.message }}</td>
+				<td>{{ m.readed_at ? 'W' : 'V' }}</td>
+			</tr>
+			<tr>
+				<td colspan="3">
+					<input type="text" v-model="typing" style="width: 100%;">
+				</td>
+				<td>
+					<button @click="sendMessage()">Send</button>
+				</td>
+			</tr>
+		</table>
+	</div>
+	<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/3.0.3/socket.io.js"></script>
+	<script src="http://code.jquery.com/jquery-latest.min.js"></script>
+	<script src="https://cdn.jsdelivr.net/npm/vue/dist/vue.js"></script>
+	<script src="https://cdnjs.cloudflare.com/ajax/libs/moment.js/2.29.1/moment.min.js" integrity="sha512-qTXRIMyZIFb8iQcfjXWCO8+M5Tbc38Qi5WzdPOYZHIlZpzBHG3L3by84BBBOiRGiEb7KKtAOAs5qYdUiZiQNNQ==" crossorigin="anonymous"></script>
+	<script>
+		const vueMain = new Vue({
+			el: '#root',
+			data() {
+				return {
+					socket: null,
+					rooms: [],
+					currentMessages: [],
+					myUsername: location.search.split('=')[1],
+					activeRoom: '',
+					typing: '',
+					willStartUsername: ''
+				}
+			},
+			mounted() {
+				this.listenIO()
+				this.getRoom()
+			},
+			methods: {
+				listenIO() {
+					this.socket = io.connect('/')
+					this.socket.on('new_message', (data) => {
+						if (data.room_code === vueMain.activeRoom) {
+							vueMain.currentMessages.push(data)
+							vueMain.readMessage()
+						} else {
+							vueMain.getRoom()
+							alert('New Chat!')
+						}
+					})
+
+					this.socket.on('read_message', (data) => {
+						vueMain.handleReadMessage(data)
+					})
+
+					this.socket.emit('listen', {
+						username: this.myUsername
+					})
+				},
+				getRoom() {
+					$.ajax({
+						url: '/room',
+						method: 'post',
+						data: {
+							username: this.myUsername
+						}
+					})
+					.then(res => {
+						Vue.set(vueMain, 'rooms', res)
+					})
+				},
+				addRoom() {
+					$.ajax({
+						url: '/room/add',
+						method: 'post',
+						data: {
+							username_1: this.myUsername,
+							username_2: this.willStartUsername
+						}
+					})
+					.then(res => {
+						Vue.set(vueMain, 'willStartUsername', '')
+						vueMain.socketSendMessage(res)
+						vueMain.getRoom()
+					})
+				},
+				getMessage() {
+					if (!this.activeRoom) {
+						Vue.set(vueMain, 'currentMessages', [])
+						return false
+					}
+					$.ajax({
+						url: '/message',
+						method: 'post',
+						data: {
+							room_code: this.activeRoom
+						}
+					})
+					.then(res => {
+						Vue.set(vueMain, 'currentMessages', res)
+						vueMain.readMessage()
+					})
+				},
+				sendMessage() {
+					if (!this.activeRoom && this.willStartUsername) {
+						return this.addRoom()
+					}
+					this.socketSendMessage()
+				},
+				socketSendMessage(roomCode = null) {
+					if (roomCode != null) {
+						this.activeRoom = roomCode
+					}
+					this.socket.emit('new_message', {
+						from: this.myUsername,
+						room_code: this.activeRoom,
+						message: this.typing
+					})
+					this.typing = ''
+				},
+				readMessage() {
+					setTimeout( () => {
+						if (!this.activeRoom) {
+							return false
+						}
+						let found = this.currentMessages.find(v => v.to === this.myUsername && !v.readed_at)
+						if (!found) {
+							return false
+						}
+
+						this.socket.emit('read_message', {
+							room_code: this.activeRoom,
+							to: this.myUsername
+						})
+					}, 500)
+				},
+				handleReadMessage(data) {
+					let filtered = this.currentMessages.filter(v => v.from === data.from && !v.readed_at)
+					for (let f of filtered) {
+						let idx = this.currentMessages.findIndex(v => v.id === f.id)
+						Vue.set(vueMain.currentMessages[idx], 'readed_at', data.readed_at)
+					}
+				},
+				formatDate(date) {
+					return moment(date).format('HH:mm:ss')
+				},
+				getNotme(u1, u2) {
+					return u1 === this.myUsername ? u2 : u1
+				}
+			}
+		})
+	</script>
+</body>
+</html>
